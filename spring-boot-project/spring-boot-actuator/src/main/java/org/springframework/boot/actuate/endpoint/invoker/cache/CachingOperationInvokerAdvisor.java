@@ -1,5 +1,5 @@
 /*
- * Copyright 2012-2019 the original author or authors.
+ * Copyright 2012-2021 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,6 +18,7 @@ package org.springframework.boot.actuate.endpoint.invoker.cache;
 
 import java.util.function.Function;
 
+import org.springframework.boot.actuate.endpoint.ApiVersion;
 import org.springframework.boot.actuate.endpoint.EndpointId;
 import org.springframework.boot.actuate.endpoint.OperationType;
 import org.springframework.boot.actuate.endpoint.SecurityContext;
@@ -54,7 +55,8 @@ public class CachingOperationInvokerAdvisor implements OperationInvokerAdvisor {
 
 	private boolean hasMandatoryParameter(OperationParameters parameters) {
 		for (OperationParameter parameter : parameters) {
-			if (parameter.isMandatory() && !SecurityContext.class.isAssignableFrom(parameter.getType())) {
+			if (parameter.isMandatory() && !ApiVersion.class.isAssignableFrom(parameter.getType())
+					&& !SecurityContext.class.isAssignableFrom(parameter.getType())) {
 				return true;
 			}
 		}

@@ -1,5 +1,5 @@
 /*
- * Copyright 2012-2019 the original author or authors.
+ * Copyright 2012-2021 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -65,6 +65,14 @@ class ConfigurationPropertiesReportEndpointAutoConfigurationTests {
 	}
 
 	@Test
+	void additionalKeysToSanitizeCanBeConfiguredViaTheEnvironment() {
+		this.contextRunner.withUserConfiguration(Config.class)
+				.withPropertyValues("management.endpoint.configprops.additional-keys-to-sanitize: property")
+				.withPropertyValues("management.endpoints.web.exposure.include=configprops")
+				.run(validateTestProperties("******", "******"));
+	}
+
+	@Test
 	void runWhenNotExposedShouldNotHaveEndpointBean() {
 		this.contextRunner
 				.run((context) -> assertThat(context).doesNotHaveBean(ConfigurationPropertiesReportEndpoint.class));
@@ -87,17 +95,17 @@ class ConfigurationPropertiesReportEndpointAutoConfigurationTests {
 
 	@Configuration(proxyBeanMethods = false)
 	@EnableConfigurationProperties
-	public static class Config {
+	static class Config {
 
 		@Bean
-		public TestProperties testProperties() {
+		TestProperties testProperties() {
 			return new TestProperties();
 		}
 
 	}
 
 	@ConfigurationProperties("test")
-	static class TestProperties {
+	public static class TestProperties {
 
 		private String dbPassword = "123456";
 

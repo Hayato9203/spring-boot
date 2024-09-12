@@ -1,5 +1,5 @@
 /*
- * Copyright 2012-2019 the original author or authors.
+ * Copyright 2012-2021 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,6 +17,7 @@
 package org.springframework.boot.actuate.endpoint.web.reactive;
 
 import java.lang.reflect.Method;
+import java.nio.charset.StandardCharsets;
 import java.security.Principal;
 import java.util.Collection;
 import java.util.Collections;
@@ -26,12 +27,12 @@ import java.util.function.Supplier;
 
 import org.reactivestreams.Publisher;
 import reactor.core.publisher.Mono;
-import reactor.core.publisher.MonoSink;
 import reactor.core.scheduler.Schedulers;
 
 import org.springframework.boot.actuate.endpoint.InvalidEndpointRequestException;
 import org.springframework.boot.actuate.endpoint.InvocationContext;
 import org.springframework.boot.actuate.endpoint.OperationType;
+import org.springframework.boot.actuate.endpoint.ProducibleOperationArgumentResolver;
 import org.springframework.boot.actuate.endpoint.SecurityContext;
 import org.springframework.boot.actuate.endpoint.invoke.OperationInvoker;
 import org.springframework.boot.actuate.endpoint.web.EndpointMapping;
@@ -42,12 +43,14 @@ import org.springframework.boot.actuate.endpoint.web.WebOperation;
 import org.springframework.boot.actuate.endpoint.web.WebOperationRequestPredicate;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.AccessDecisionVoter;
 import org.springframework.security.access.SecurityConfig;
 import org.springframework.security.access.vote.RoleVoter;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.ReactiveSecurityContextHolder;
+import org.springframework.util.AntPathMatcher;
 import org.springframework.util.ClassUtils;
 import org.springframework.util.ReflectionUtils;
 import org.springframework.util.StringUtils;
@@ -57,15 +60,10 @@ import org.springframework.web.bind.annotation.ResponseBody;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.method.HandlerMethod;
 import org.springframework.web.reactive.HandlerMapping;
-import org.springframework.web.reactive.result.condition.ConsumesRequestCondition;
-import org.springframework.web.reactive.result.condition.PatternsRequestCondition;
-import org.springframework.web.reactive.result.condition.ProducesRequestCondition;
-import org.springframework.web.reactive.result.condition.RequestMethodsRequestCondition;
 import org.springframework.web.reactive.result.method.RequestMappingInfo;
 import org.springframework.web.reactive.result.method.RequestMappingInfoHandlerMapping;
 import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.server.ServerWebExchange;
-import org.springframework.web.util.pattern.PathPatternParser;
 
 /**
  * A custom {@link HandlerMapping} that makes web endpoints available over HTTP using
@@ -78,8 +76,6 @@ import org.springframework.web.util.pattern.PathPatternParser;
  * @since 2.0.0
  */
 public abstract class AbstractWebFluxEndpointHandlerMapping extends RequestMappingInfoHandlerMapping {
-
-	private static final PathPatternParser pathPatternParser = new PathPatternParser();
 
 	private final EndpointMapping endpointMapping;
 
@@ -95,6 +91,8 @@ public abstract class AbstractWebFluxEndpointHandlerMapping extends RequestMappi
 	private final Method handleReadMethod = ReflectionUtils.findMethod(ReadOperationHandler.class, "handle",
 			ServerWebExchange.class);
 
+	private final boolean shouldRegisterLinksMapping;
+
 	/**
 	 * Creates a new {@code AbstractWebFluxEndpointHandlerMapping} that provides mappings
 	 * for the operations of the given {@code webEndpoints}.
@@ -102,14 +100,16 @@ public abstract class AbstractWebFluxEndpointHandlerMapping extends RequestMappi
 	 * @param endpoints the web endpoints
 	 * @param endpointMediaTypes media types consumed and produced by the endpoints
 	 * @param corsConfiguration the CORS configuration for the endpoints
+	 * @param shouldRegisterLinksMapping whether the links endpoint should be registered
 	 */
 	public AbstractWebFluxEndpointHandlerMapping(EndpointMapping endpointMapping,
 			Collection<ExposableWebEndpoint> endpoints, EndpointMediaTypes endpointMediaTypes,
-			CorsConfiguration corsConfiguration) {
+			CorsConfiguration corsConfiguration, boolean shouldRegisterLinksMapping) {
 		this.endpointMapping = endpointMapping;
 		this.endpoints = endpoints;
 		this.endpointMediaTypes = endpointMediaTypes;
 		this.corsConfiguration = corsConfiguration;
+		this.shouldRegisterLinksMapping = shouldRegisterLinksMapping;
 		setOrder(-100);
 	}
 
@@ -120,7 +120,7 @@ public abstract class AbstractWebFluxEndpointHandlerMapping extends RequestMappi
 				registerMappingForOperation(endpoint, operation);
 			}
 		}
-		if (StringUtils.hasText(this.endpointMapping.getPath())) {
+		if (this.shouldRegisterLinksMapping) {
 			registerLinksMapping();
 		}
 	}
@@ -159,24 +159,18 @@ public abstract class AbstractWebFluxEndpointHandlerMapping extends RequestMappi
 
 	private RequestMappingInfo createRequestMappingInfo(WebOperation operation) {
 		WebOperationRequestPredicate predicate = operation.getRequestPredicate();
-		PatternsRequestCondition patterns = new PatternsRequestCondition(
-				pathPatternParser.parse(this.endpointMapping.createSubPath(predicate.getPath())));
-		RequestMethodsRequestCondition methods = new RequestMethodsRequestCondition(
-				RequestMethod.valueOf(predicate.getHttpMethod().name()));
-		ConsumesRequestCondition consumes = new ConsumesRequestCondition(
-				StringUtils.toStringArray(predicate.getConsumes()));
-		ProducesRequestCondition produces = new ProducesRequestCondition(
-				StringUtils.toStringArray(predicate.getProduces()));
-		return new RequestMappingInfo(null, patterns, methods, null, null, consumes, produces, null);
+		String path = this.endpointMapping.createSubPath(predicate.getPath());
+		RequestMethod method = RequestMethod.valueOf(predicate.getHttpMethod().name());
+		String[] consumes = StringUtils.toStringArray(predicate.getConsumes());
+		String[] produces = StringUtils.toStringArray(predicate.getProduces());
+		return RequestMappingInfo.paths(path).methods(method).consumes(consumes).produces(produces).build();
 	}
 
 	private void registerLinksMapping() {
-		PatternsRequestCondition patterns = new PatternsRequestCondition(
-				pathPatternParser.parse(this.endpointMapping.getPath()));
-		RequestMethodsRequestCondition methods = new RequestMethodsRequestCondition(RequestMethod.GET);
-		ProducesRequestCondition produces = new ProducesRequestCondition(
-				StringUtils.toStringArray(this.endpointMediaTypes.getProduced()));
-		RequestMappingInfo mapping = new RequestMappingInfo(patterns, methods, null, null, null, produces, null);
+		String path = this.endpointMapping.getPath();
+		String[] produces = StringUtils.toStringArray(this.endpointMediaTypes.getProduced());
+		RequestMappingInfo mapping = RequestMappingInfo.paths(path).methods(RequestMethod.GET).produces(produces)
+				.build();
 		LinksHandler linksHandler = getLinksHandler();
 		registerMapping(mapping, linksHandler,
 				ReflectionUtils.findMethod(linksHandler.getClass(), "links", ServerWebExchange.class));
@@ -218,7 +212,8 @@ public abstract class AbstractWebFluxEndpointHandlerMapping extends RequestMappi
 
 	/**
 	 * An {@link OperationInvoker} that performs the invocation of a blocking operation on
-	 * a separate thread using Reactor's {@link Schedulers#elastic() elastic scheduler}.
+	 * a separate thread using Reactor's {@link Schedulers#boundedElastic() bounded
+	 * elastic scheduler}.
 	 */
 	protected static final class ElasticSchedulerInvoker implements OperationInvoker {
 
@@ -230,17 +225,7 @@ public abstract class AbstractWebFluxEndpointHandlerMapping extends RequestMappi
 
 		@Override
 		public Object invoke(InvocationContext context) {
-			return Mono.create((sink) -> Schedulers.elastic().schedule(() -> invoke(context, sink)));
-		}
-
-		private void invoke(InvocationContext context, MonoSink<Object> sink) {
-			try {
-				Object result = this.invoker.invoke(context);
-				sink.success(result);
-			}
-			catch (Exception ex) {
-				sink.error(ex);
-			}
+			return Mono.fromCallable(() -> this.invoker.invoke(context)).subscribeOn(Schedulers.boundedElastic());
 		}
 
 	}
@@ -271,15 +256,17 @@ public abstract class AbstractWebFluxEndpointHandlerMapping extends RequestMappi
 	 */
 	private static final class ReactiveWebOperationAdapter implements ReactiveWebOperation {
 
-		private final OperationInvoker invoker;
+		private static final String PATH_SEPARATOR = AntPathMatcher.DEFAULT_PATH_SEPARATOR;
 
-		private final String operationId;
+		private final WebOperation operation;
+
+		private final OperationInvoker invoker;
 
 		private final Supplier<Mono<? extends SecurityContext>> securityContextSupplier;
 
 		private ReactiveWebOperationAdapter(WebOperation operation) {
+			this.operation = operation;
 			this.invoker = getInvoker(operation);
-			this.operationId = operation.getId();
 			this.securityContextSupplier = getSecurityContextSupplier();
 		}
 
@@ -299,28 +286,45 @@ public abstract class AbstractWebFluxEndpointHandlerMapping extends RequestMappi
 			return this::emptySecurityContext;
 		}
 
-		public Mono<? extends SecurityContext> springSecurityContext() {
+		Mono<? extends SecurityContext> springSecurityContext() {
 			return ReactiveSecurityContextHolder.getContext()
 					.map((securityContext) -> new ReactiveSecurityContext(securityContext.getAuthentication()))
 					.switchIfEmpty(Mono.just(new ReactiveSecurityContext(null)));
 		}
 
-		public Mono<SecurityContext> emptySecurityContext() {
+		Mono<SecurityContext> emptySecurityContext() {
 			return Mono.just(SecurityContext.NONE);
 		}
 
 		@Override
 		public Mono<ResponseEntity<Object>> handle(ServerWebExchange exchange, Map<String, String> body) {
 			Map<String, Object> arguments = getArguments(exchange, body);
+			String matchAllRemainingPathSegmentsVariable = this.operation.getRequestPredicate()
+					.getMatchAllRemainingPathSegmentsVariable();
+			if (matchAllRemainingPathSegmentsVariable != null) {
+				arguments.put(matchAllRemainingPathSegmentsVariable,
+						tokenizePathSegments((String) arguments.get(matchAllRemainingPathSegmentsVariable)));
+			}
 			return this.securityContextSupplier.get()
-					.map((securityContext) -> new InvocationContext(securityContext, arguments))
+					.map((securityContext) -> new InvocationContext(securityContext, arguments,
+							new ProducibleOperationArgumentResolver(
+									() -> exchange.getRequest().getHeaders().get("Accept"))))
 					.flatMap((invocationContext) -> handleResult((Publisher<?>) this.invoker.invoke(invocationContext),
 							exchange.getRequest().getMethod()));
 		}
 
+		private String[] tokenizePathSegments(String path) {
+			String[] segments = StringUtils.tokenizeToStringArray(path, PATH_SEPARATOR, false, true);
+			for (int i = 0; i < segments.length; i++) {
+				if (segments[i].contains("%")) {
+					segments[i] = StringUtils.uriDecode(segments[i], StandardCharsets.UTF_8);
+				}
+			}
+			return segments;
+		}
+
 		private Map<String, Object> getArguments(ServerWebExchange exchange, Map<String, String> body) {
-			Map<String, Object> arguments = new LinkedHashMap<>();
-			arguments.putAll(getTemplateVariables(exchange));
+			Map<String, Object> arguments = new LinkedHashMap<>(getTemplateVariables(exchange));
 			if (body != null) {
 				arguments.putAll(body);
 			}
@@ -346,13 +350,15 @@ public abstract class AbstractWebFluxEndpointHandlerMapping extends RequestMappi
 				return new ResponseEntity<>(response, HttpStatus.OK);
 			}
 			WebEndpointResponse<?> webEndpointResponse = (WebEndpointResponse<?>) response;
-			return new ResponseEntity<>(webEndpointResponse.getBody(),
-					HttpStatus.valueOf(webEndpointResponse.getStatus()));
+			MediaType contentType = (webEndpointResponse.getContentType() != null)
+					? new MediaType(webEndpointResponse.getContentType()) : null;
+			return ResponseEntity.status(webEndpointResponse.getStatus()).contentType(contentType)
+					.body(webEndpointResponse.getBody());
 		}
 
 		@Override
 		public String toString() {
-			return "Actuator web endpoint '" + this.operationId + "'";
+			return "Actuator web endpoint '" + this.operation.getId() + "'";
 		}
 
 	}
@@ -360,7 +366,7 @@ public abstract class AbstractWebFluxEndpointHandlerMapping extends RequestMappi
 	/**
 	 * Handler for a {@link ReactiveWebOperation}.
 	 */
-	private final class WriteOperationHandler {
+	private static final class WriteOperationHandler {
 
 		private final ReactiveWebOperation operation;
 
@@ -369,7 +375,7 @@ public abstract class AbstractWebFluxEndpointHandlerMapping extends RequestMappi
 		}
 
 		@ResponseBody
-		public Publisher<ResponseEntity<Object>> handle(ServerWebExchange exchange,
+		Publisher<ResponseEntity<Object>> handle(ServerWebExchange exchange,
 				@RequestBody(required = false) Map<String, String> body) {
 			return this.operation.handle(exchange, body);
 		}
@@ -379,7 +385,7 @@ public abstract class AbstractWebFluxEndpointHandlerMapping extends RequestMappi
 	/**
 	 * Handler for a {@link ReactiveWebOperation}.
 	 */
-	private final class ReadOperationHandler {
+	private static final class ReadOperationHandler {
 
 		private final ReactiveWebOperation operation;
 
@@ -388,7 +394,7 @@ public abstract class AbstractWebFluxEndpointHandlerMapping extends RequestMappi
 		}
 
 		@ResponseBody
-		public Publisher<ResponseEntity<Object>> handle(ServerWebExchange exchange) {
+		Publisher<ResponseEntity<Object>> handle(ServerWebExchange exchange) {
 			return this.operation.handle(exchange, null);
 		}
 

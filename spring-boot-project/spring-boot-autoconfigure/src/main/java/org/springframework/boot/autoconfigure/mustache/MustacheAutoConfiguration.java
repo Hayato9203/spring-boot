@@ -1,5 +1,5 @@
 /*
- * Copyright 2012-2019 the original author or authors.
+ * Copyright 2012-2021 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,8 +15,6 @@
  */
 
 package org.springframework.boot.autoconfigure.mustache;
-
-import javax.annotation.PostConstruct;
 
 import com.samskivert.mustache.Mustache;
 import com.samskivert.mustache.Mustache.Collector;
@@ -57,15 +55,15 @@ public class MustacheAutoConfiguration {
 	public MustacheAutoConfiguration(MustacheProperties mustache, ApplicationContext applicationContext) {
 		this.mustache = mustache;
 		this.applicationContext = applicationContext;
+		checkTemplateLocationExists();
 	}
 
-	@PostConstruct
 	public void checkTemplateLocationExists() {
 		if (this.mustache.isCheckTemplateLocation()) {
 			TemplateLocation location = new TemplateLocation(this.mustache.getPrefix());
-			if (!location.exists(this.applicationContext)) {
+			if (!location.exists(this.applicationContext) && logger.isWarnEnabled()) {
 				logger.warn("Cannot find template location: " + location
-						+ " (please add some templates, check your Mustache " + "configuration, or set spring.mustache."
+						+ " (please add some templates, check your Mustache configuration, or set spring.mustache."
 						+ "check-template-location=false)");
 			}
 		}
@@ -77,6 +75,7 @@ public class MustacheAutoConfiguration {
 		return Mustache.compiler().withLoader(mustacheTemplateLoader).withCollector(collector(environment));
 	}
 
+	@Deprecated
 	private Collector collector(Environment environment) {
 		MustacheEnvironmentCollector collector = new MustacheEnvironmentCollector();
 		collector.setEnvironment(environment);

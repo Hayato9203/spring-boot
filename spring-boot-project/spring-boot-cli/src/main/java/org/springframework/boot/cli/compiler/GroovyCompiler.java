@@ -1,5 +1,5 @@
 /*
- * Copyright 2012-2019 the original author or authors.
+ * Copyright 2012-2021 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,6 +21,7 @@ import java.lang.reflect.Field;
 import java.net.URL;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Deque;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.ServiceLoader;
@@ -71,6 +72,7 @@ import org.springframework.util.ClassUtils;
  * @author Phillip Webb
  * @author Dave Syer
  * @author Andy Wilkinson
+ * @since 1.0.0
  */
 public class GroovyCompiler {
 
@@ -215,16 +217,16 @@ public class GroovyCompiler {
 
 	@SuppressWarnings("rawtypes")
 	private void addAstTransformations(CompilationUnit compilationUnit) {
-		LinkedList[] phaseOperations = getPhaseOperations(compilationUnit);
-		processConversionOperations(phaseOperations[Phases.CONVERSION]);
+		Deque[] phaseOperations = getPhaseOperations(compilationUnit);
+		processConversionOperations((LinkedList) phaseOperations[Phases.CONVERSION]);
 	}
 
 	@SuppressWarnings("rawtypes")
-	private LinkedList[] getPhaseOperations(CompilationUnit compilationUnit) {
+	private Deque[] getPhaseOperations(CompilationUnit compilationUnit) {
 		try {
 			Field field = CompilationUnit.class.getDeclaredField("phaseOperations");
 			field.setAccessible(true);
-			return (LinkedList[]) field.get(compilationUnit);
+			return (Deque[]) field.get(compilationUnit);
 		}
 		catch (Exception ex) {
 			throw new IllegalStateException("Phase operations not available from compilation unit");
@@ -234,7 +236,7 @@ public class GroovyCompiler {
 	@SuppressWarnings({ "rawtypes", "unchecked" })
 	private void processConversionOperations(LinkedList conversionOperations) {
 		int index = getIndexOfASTTransformationVisitor(conversionOperations);
-		conversionOperations.add(index, new CompilationUnit.SourceUnitOperation() {
+		conversionOperations.add(index, new CompilationUnit.ISourceUnitOperation() {
 			@Override
 			public void call(SourceUnit source) throws CompilationFailedException {
 				ASTNode[] nodes = new ASTNode[] { source.getAST() };
@@ -269,11 +271,12 @@ public class GroovyCompiler {
 				throws CompilationFailedException {
 
 			ImportCustomizer importCustomizer = new SmartImportCustomizer(source);
-			ClassNode mainClassNode = MainClass.get(source.getAST().getClasses());
+			List<ClassNode> classNodes = source.getAST().getClasses();
+			ClassNode mainClassNode = MainClass.get(classNodes);
 
 			// Additional auto configuration
 			for (CompilerAutoConfiguration autoConfiguration : GroovyCompiler.this.compilerAutoConfigurations) {
-				if (autoConfiguration.matches(classNode)) {
+				if (classNodes.stream().anyMatch(autoConfiguration::matches)) {
 					if (GroovyCompiler.this.configuration.isGuessImports()) {
 						autoConfiguration.applyImports(importCustomizer);
 						importCustomizer.call(source, context, classNode);
@@ -293,11 +296,11 @@ public class GroovyCompiler {
 
 	private static class MainClass {
 
-		public static ClassNode get(CompilationUnit source) {
+		static ClassNode get(CompilationUnit source) {
 			return get(source.getAST().getClasses());
 		}
 
-		public static ClassNode get(List<ClassNode> classes) {
+		static ClassNode get(List<ClassNode> classes) {
 			for (ClassNode node : classes) {
 				if (AstUtils.hasAtLeastOneAnnotation(node, "Enable*AutoConfiguration")) {
 					return null; // No need to enhance this

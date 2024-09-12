@@ -1,5 +1,5 @@
 /*
- * Copyright 2012-2019 the original author or authors.
+ * Copyright 2012-2021 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -57,6 +57,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.actuate.metrics.AutoTimer;
+import org.springframework.boot.web.servlet.error.ErrorAttributes;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
@@ -83,6 +84,7 @@ import org.springframework.web.util.NestedServletException;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatExceptionOfType;
+import static org.assertj.core.api.Assertions.assertThatIOException;
 import static org.assertj.core.api.Assertions.fail;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.asyncDispatch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -121,7 +123,7 @@ class WebMvcMetricsFilterTests {
 	private CyclicBarrier completableFutureBarrier;
 
 	@BeforeEach
-	public void setupMockMvc() {
+	void setupMockMvc() {
 		this.mvc = MockMvcBuilders.webAppContextSetup(this.context)
 				.addFilters(this.filter, new RedirectAndNotFoundFilter()).build();
 	}
@@ -186,7 +188,7 @@ class WebMvcMetricsFilterTests {
 	void streamingError() throws Exception {
 		MvcResult result = this.mvc.perform(get("/api/c1/streamingError")).andExpect(request().asyncStarted())
 				.andReturn();
-		assertThatCode(() -> this.mvc.perform(asyncDispatch(result)).andExpect(status().isOk()));
+		assertThatIOException().isThrownBy(() -> this.mvc.perform(asyncDispatch(result)).andReturn());
 		assertThat(this.registry.get("http.server.requests").tags("exception", "IOException").timer().count())
 				.isEqualTo(1L);
 	}
@@ -263,7 +265,8 @@ class WebMvcMetricsFilterTests {
 	@Test
 	void endpointThrowsError() throws Exception {
 		this.mvc.perform(get("/api/c1/error/10")).andExpect(status().is4xxClientError());
-		assertThat(this.registry.get("http.server.requests").tags("status", "422").timer().count()).isEqualTo(1L);
+		assertThat(this.registry.get("http.server.requests").tags("status", "422", "exception", "IllegalStateException")
+				.timer().count()).isEqualTo(1L);
 	}
 
 	@Test
@@ -288,10 +291,18 @@ class WebMvcMetricsFilterTests {
 		assertThat(this.prometheusRegistry.scrape()).contains("le=\"30.0\"");
 	}
 
+	@Test
+	void trailingSlashShouldNotRecordDuplicateMetrics() throws Exception {
+		this.mvc.perform(get("/api/c1/simple/10")).andExpect(status().isOk());
+		this.mvc.perform(get("/api/c1/simple/10/")).andExpect(status().isOk());
+		assertThat(this.registry.get("http.server.requests").tags("status", "200", "uri", "/api/c1/simple/{id}").timer()
+				.count()).isEqualTo(2);
+	}
+
 	@Target({ ElementType.METHOD })
 	@Retention(RetentionPolicy.RUNTIME)
 	@Timed(percentiles = 0.95)
-	public @interface Timed95 {
+	@interface Timed95 {
 
 	}
 
@@ -355,7 +366,7 @@ class WebMvcMetricsFilterTests {
 
 		@Bean
 		WebMvcMetricsFilter webMetricsFilter(MeterRegistry registry, WebApplicationContext ctx) {
-			return new WebMvcMetricsFilter(registry, new DefaultWebMvcTagsProvider(), "http.server.requests",
+			return new WebMvcMetricsFilter(registry, new DefaultWebMvcTagsProvider(true), "http.server.requests",
 					AutoTimer.ENABLED);
 		}
 
@@ -375,14 +386,19 @@ class WebMvcMetricsFilterTests {
 
 		@Timed(extraTags = { "public", "true" })
 		@GetMapping("/{id}")
-		public String successfulWithExtraTags(@PathVariable Long id) {
+		String successfulWithExtraTags(@PathVariable Long id) {
+			return id.toString();
+		}
+
+		@GetMapping("/simple/{id}")
+		String simpleMapping(@PathVariable Long id) {
 			return id.toString();
 		}
 
 		@Timed
 		@Timed(value = "my.long.request", extraTags = { "region", "test" }, longTask = true)
 		@GetMapping("/callable/{id}")
-		public Callable<String> asyncCallable(@PathVariable Long id) throws Exception {
+		Callable<String> asyncCallable(@PathVariable Long id) throws Exception {
 			this.callableBarrier.await();
 			return () -> {
 				try {
@@ -420,31 +436,31 @@ class WebMvcMetricsFilterTests {
 		}
 
 		@GetMapping("/untimed/{id}")
-		public String successfulButUntimed(@PathVariable Long id) {
+		String successfulButUntimed(@PathVariable Long id) {
 			return id.toString();
 		}
 
 		@Timed
 		@GetMapping("/error/{id}")
-		public String alwaysThrowsException(@PathVariable Long id) {
+		String alwaysThrowsException(@PathVariable Long id) {
 			throw new IllegalStateException("Boom on " + id + "!");
 		}
 
 		@Timed
 		@GetMapping("/anonymousError/{id}")
-		public String alwaysThrowsAnonymousException(@PathVariable Long id) throws Exception {
+		String alwaysThrowsAnonymousException(@PathVariable Long id) throws Exception {
 			throw new Exception("this exception won't have a simple class name") {
 			};
 		}
 
 		@Timed
 		@GetMapping("/unhandledError/{id}")
-		public String alwaysThrowsUnhandledException(@PathVariable Long id) {
+		String alwaysThrowsUnhandledException(@PathVariable Long id) {
 			throw new RuntimeException("Boom on " + id + "!");
 		}
 
 		@GetMapping("/streamingError")
-		public ResponseBodyEmitter streamingError() {
+		ResponseBodyEmitter streamingError() {
 			ResponseBodyEmitter emitter = new ResponseBodyEmitter();
 			emitter.completeWithError(new IOException("error while writing to the response"));
 			return emitter;
@@ -452,31 +468,33 @@ class WebMvcMetricsFilterTests {
 
 		@Timed
 		@GetMapping("/regex/{id:\\.[a-z]+}")
-		public String successfulRegex(@PathVariable String id) {
+		String successfulRegex(@PathVariable String id) {
 			return id;
 		}
 
 		@Timed(percentiles = { 0.50, 0.95 })
 		@GetMapping("/percentiles/{id}")
-		public String percentiles(@PathVariable String id) {
+		String percentiles(@PathVariable String id) {
 			return id;
 		}
 
 		@Timed(histogram = true)
 		@GetMapping("/histogram/{id}")
-		public String histogram(@PathVariable String id) {
+		String histogram(@PathVariable String id) {
 			return id;
 		}
 
 		@Timed95
 		@GetMapping("/metaTimed/{id}")
-		public String meta(@PathVariable String id) {
+		String meta(@PathVariable String id) {
 			return id;
 		}
 
 		@ExceptionHandler(IllegalStateException.class)
 		@ResponseStatus(HttpStatus.UNPROCESSABLE_ENTITY)
 		ModelAndView defaultErrorHandler(HttpServletRequest request, Exception e) {
+			// this is done by ErrorAttributes implementations
+			request.setAttribute(ErrorAttributes.ERROR_ATTRIBUTE, e);
 			return new ModelAndView("myerror");
 		}
 
@@ -488,7 +506,7 @@ class WebMvcMetricsFilterTests {
 	static class Controller2 {
 
 		@GetMapping("/{id}")
-		public String successful(@PathVariable Long id) {
+		String successful(@PathVariable Long id) {
 			return id.toString();
 		}
 

@@ -1,5 +1,5 @@
 /*
- * Copyright 2012-2019 the original author or authors.
+ * Copyright 2012-2021 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,9 +17,11 @@
 package org.springframework.boot.convert;
 
 import java.text.ParseException;
+import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 
+import org.assertj.core.api.ThrowableAssert.ThrowingCallable;
 import org.junit.jupiter.api.Test;
 
 import org.springframework.context.ConfigurableApplicationContext;
@@ -32,6 +34,8 @@ import org.springframework.format.FormatterRegistry;
 import org.springframework.format.Parser;
 import org.springframework.format.Printer;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatExceptionOfType;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
@@ -91,7 +95,49 @@ class ApplicationConversionServiceTests {
 		}
 	}
 
-	private static class ExampleGenericConverter implements GenericConverter {
+	@Test
+	void isConvertViaObjectSourceTypeWhenObjectSourceReturnsTrue() {
+		// Uses ObjectToCollectionConverter
+		ApplicationConversionService conversionService = new ApplicationConversionService();
+		TypeDescriptor sourceType = TypeDescriptor.valueOf(Long.class);
+		TypeDescriptor targetType = TypeDescriptor.valueOf(List.class);
+		assertThat(conversionService.canConvert(sourceType, targetType)).isTrue();
+		assertThat(conversionService.isConvertViaObjectSourceType(sourceType, targetType)).isTrue();
+	}
+
+	@Test
+	void isConvertViaObjectSourceTypeWhenNotObjectSourceReturnsFalse() {
+		// Uses StringToCollectionConverter
+		ApplicationConversionService conversionService = new ApplicationConversionService();
+		TypeDescriptor sourceType = TypeDescriptor.valueOf(String.class);
+		TypeDescriptor targetType = TypeDescriptor.valueOf(List.class);
+		assertThat(conversionService.canConvert(sourceType, targetType)).isTrue();
+		assertThat(conversionService.isConvertViaObjectSourceType(sourceType, targetType)).isFalse();
+	}
+
+	@Test
+	void sharedInstanceCannotBeModified() {
+		ApplicationConversionService instance = (ApplicationConversionService) ApplicationConversionService
+				.getSharedInstance();
+		assertUnmodifiableExceptionThrown(() -> instance.addPrinter(null));
+		assertUnmodifiableExceptionThrown(() -> instance.addParser(null));
+		assertUnmodifiableExceptionThrown(() -> instance.addFormatter(null));
+		assertUnmodifiableExceptionThrown(() -> instance.addFormatterForFieldType(null, null));
+		assertUnmodifiableExceptionThrown(() -> instance.addConverter((Converter<?, ?>) null));
+		assertUnmodifiableExceptionThrown(() -> instance.addFormatterForFieldType(null, null, null));
+		assertUnmodifiableExceptionThrown(() -> instance.addFormatterForFieldAnnotation(null));
+		assertUnmodifiableExceptionThrown(() -> instance.addConverter(null, null, null));
+		assertUnmodifiableExceptionThrown(() -> instance.addConverter((GenericConverter) null));
+		assertUnmodifiableExceptionThrown(() -> instance.addConverterFactory(null));
+		assertUnmodifiableExceptionThrown(() -> instance.removeConvertible(null, null));
+	}
+
+	private void assertUnmodifiableExceptionThrown(ThrowingCallable throwingCallable) {
+		assertThatExceptionOfType(UnsupportedOperationException.class).isThrownBy(throwingCallable)
+				.withMessage("This ApplicationConversionService cannot be modified");
+	}
+
+	static class ExampleGenericConverter implements GenericConverter {
 
 		@Override
 		public Set<ConvertiblePair> getConvertibleTypes() {
@@ -105,7 +151,7 @@ class ApplicationConversionServiceTests {
 
 	}
 
-	private static class ExampleConverter implements Converter<String, Integer> {
+	static class ExampleConverter implements Converter<String, Integer> {
 
 		@Override
 		public Integer convert(String source) {
@@ -114,7 +160,7 @@ class ApplicationConversionServiceTests {
 
 	}
 
-	private static class ExampleFormatter implements Formatter<Integer> {
+	static class ExampleFormatter implements Formatter<Integer> {
 
 		@Override
 		public String print(Integer object, Locale locale) {
@@ -128,7 +174,7 @@ class ApplicationConversionServiceTests {
 
 	}
 
-	private static class ExampleParser implements Parser<Integer> {
+	static class ExampleParser implements Parser<Integer> {
 
 		@Override
 		public Integer parse(String text, Locale locale) throws ParseException {
@@ -137,7 +183,7 @@ class ApplicationConversionServiceTests {
 
 	}
 
-	private static class ExamplePrinter implements Printer<Integer> {
+	static class ExamplePrinter implements Printer<Integer> {
 
 		@Override
 		public String print(Integer object, Locale locale) {

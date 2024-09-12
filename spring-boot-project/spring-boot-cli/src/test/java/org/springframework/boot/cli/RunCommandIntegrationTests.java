@@ -1,5 +1,5 @@
 /*
- * Copyright 2012-2019 the original author or authors.
+ * Copyright 2012-2020 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -39,21 +39,21 @@ import static org.assertj.core.api.Assertions.assertThat;
 class RunCommandIntegrationTests {
 
 	@RegisterExtension
-	private CliTester cli;
+	CliTester cli;
 
-	RunCommandIntegrationTests(CapturedOutput capturedOutput) {
-		this.cli = new CliTester("src/it/resources/run-command/", capturedOutput);
+	RunCommandIntegrationTests(CapturedOutput output) {
+		this.cli = new CliTester("src/test/resources/run-command/", output);
 	}
 
 	private Properties systemProperties = new Properties();
 
 	@BeforeEach
-	public void captureSystemProperties() {
+	void captureSystemProperties() {
 		this.systemProperties.putAll(System.getProperties());
 	}
 
 	@AfterEach
-	public void restoreSystemProperties() {
+	void restoreSystemProperties() {
 		System.setProperties(this.systemProperties);
 	}
 

@@ -1,5 +1,5 @@
 /*
- * Copyright 2012-2019 the original author or authors.
+ * Copyright 2012-2021 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -58,25 +58,25 @@ class MongoReactiveAutoConfigurationTests {
 	}
 
 	@Test
-	void optionsAdded() {
+	void settingsAdded() {
 		this.contextRunner.withPropertyValues("spring.data.mongodb.host:localhost")
-				.withUserConfiguration(OptionsConfig.class)
+				.withUserConfiguration(SettingsConfig.class)
 				.run((context) -> assertThat(getSettings(context).getSocketSettings().getReadTimeout(TimeUnit.SECONDS))
 						.isEqualTo(300));
 	}
 
 	@Test
-	void optionsAddedButNoHost() {
+	void settingsAddedButNoHost() {
 		this.contextRunner.withPropertyValues("spring.data.mongodb.uri:mongodb://localhost/test")
-				.withUserConfiguration(OptionsConfig.class)
+				.withUserConfiguration(SettingsConfig.class)
 				.run((context) -> assertThat(getSettings(context).getReadPreference())
 						.isEqualTo(ReadPreference.nearest()));
 	}
 
 	@Test
-	void optionsSslConfig() {
+	void settingsSslConfig() {
 		this.contextRunner.withPropertyValues("spring.data.mongodb.uri:mongodb://localhost/test")
-				.withUserConfiguration(SslOptionsConfig.class).run((context) -> {
+				.withUserConfiguration(SslSettingsConfig.class).run((context) -> {
 					assertThat(context).hasSingleBean(MongoClient.class);
 					MongoClientSettings settings = getSettings(context);
 					assertThat(settings.getApplicationName()).isEqualTo("test-config");
@@ -110,17 +110,16 @@ class MongoReactiveAutoConfigurationTests {
 				});
 	}
 
-	@SuppressWarnings("deprecation")
 	private MongoClientSettings getSettings(ApplicationContext context) {
 		MongoClient client = context.getBean(MongoClient.class);
-		return (MongoClientSettings) ReflectionTestUtils.getField(client.getSettings(), "wrapped");
+		return (MongoClientSettings) ReflectionTestUtils.getField(client, "settings");
 	}
 
 	@Configuration(proxyBeanMethods = false)
-	static class OptionsConfig {
+	static class SettingsConfig {
 
 		@Bean
-		public MongoClientSettings mongoClientSettings() {
+		MongoClientSettings mongoClientSettings() {
 			return MongoClientSettings.builder().readPreference(ReadPreference.nearest())
 					.applyToSocketSettings((socket) -> socket.readTimeout(300, TimeUnit.SECONDS)).build();
 		}
@@ -128,16 +127,16 @@ class MongoReactiveAutoConfigurationTests {
 	}
 
 	@Configuration(proxyBeanMethods = false)
-	static class SslOptionsConfig {
+	static class SslSettingsConfig {
 
 		@Bean
-		public MongoClientSettings mongoClientSettings(StreamFactoryFactory streamFactoryFactory) {
+		MongoClientSettings mongoClientSettings(StreamFactoryFactory streamFactoryFactory) {
 			return MongoClientSettings.builder().applicationName("test-config")
 					.streamFactoryFactory(streamFactoryFactory).build();
 		}
 
 		@Bean
-		public StreamFactoryFactory myStreamFactoryFactory() {
+		StreamFactoryFactory myStreamFactoryFactory() {
 			StreamFactoryFactory streamFactoryFactory = mock(StreamFactoryFactory.class);
 			given(streamFactoryFactory.create(any(), any())).willReturn(mock(StreamFactory.class));
 			return streamFactoryFactory;
@@ -152,7 +151,7 @@ class MongoReactiveAutoConfigurationTests {
 				.build();
 
 		@Bean
-		public MongoClientSettingsBuilderCustomizer customizer() {
+		MongoClientSettingsBuilderCustomizer customizer() {
 			return (clientSettingsBuilder) -> clientSettingsBuilder.applicationName("overridden-name")
 					.streamFactoryFactory(streamFactoryFactory);
 		}

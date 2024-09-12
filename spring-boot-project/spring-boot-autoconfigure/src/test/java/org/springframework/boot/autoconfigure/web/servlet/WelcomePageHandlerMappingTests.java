@@ -1,5 +1,5 @@
 /*
- * Copyright 2012-2019 the original author or authors.
+ * Copyright 2012-2021 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,7 +18,6 @@ package org.springframework.boot.autoconfigure.web.servlet;
 
 import java.util.Collections;
 import java.util.Map;
-import java.util.Optional;
 
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
@@ -155,15 +154,14 @@ class WelcomePageHandlerMappingTests {
 	static class HandlerMappingConfiguration {
 
 		@Bean
-		public WelcomePageHandlerMapping handlerMapping(ApplicationContext applicationContext,
+		WelcomePageHandlerMapping handlerMapping(ApplicationContext applicationContext,
 				ObjectProvider<TemplateAvailabilityProviders> templateAvailabilityProviders,
 				ObjectProvider<Resource> staticIndexPage,
 				@Value("${static-path-pattern:/**}") String staticPathPattern) {
 			return new WelcomePageHandlerMapping(
 					templateAvailabilityProviders
 							.getIfAvailable(() -> new TemplateAvailabilityProviders(applicationContext)),
-					applicationContext, Optional.ofNullable(staticIndexPage.getIfAvailable()), staticPathPattern);
-
+					applicationContext, staticIndexPage.getIfAvailable(), staticPathPattern);
 		}
 
 	}
@@ -172,7 +170,7 @@ class WelcomePageHandlerMappingTests {
 	static class StaticResourceConfiguration {
 
 		@Bean
-		public Resource staticIndexPage() {
+		Resource staticIndexPage() {
 			return new FileSystemResource("src/test/resources/welcome-page/index.html");
 		}
 
@@ -182,13 +180,13 @@ class WelcomePageHandlerMappingTests {
 	static class TemplateConfiguration {
 
 		@Bean
-		public TemplateAvailabilityProviders templateAvailabilityProviders() {
+		TemplateAvailabilityProviders templateAvailabilityProviders() {
 			return new TestTemplateAvailabilityProviders(
 					(view, environment, classLoader, resourceLoader) -> view.equals("index"));
 		}
 
 		@Bean
-		public ViewResolver viewResolver() {
+		ViewResolver viewResolver() {
 			return (name, locale) -> {
 				if (name.startsWith("forward:")) {
 					return new InternalResourceView(name.substring("forward:".length()));
@@ -207,7 +205,7 @@ class WelcomePageHandlerMappingTests {
 
 	}
 
-	private static class TestTemplateAvailabilityProviders extends TemplateAvailabilityProviders {
+	static class TestTemplateAvailabilityProviders extends TemplateAvailabilityProviders {
 
 		TestTemplateAvailabilityProviders(TemplateAvailabilityProvider provider) {
 			super(Collections.singletonList(provider));

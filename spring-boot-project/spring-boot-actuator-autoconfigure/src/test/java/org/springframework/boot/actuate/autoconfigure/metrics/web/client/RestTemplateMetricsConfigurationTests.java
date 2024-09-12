@@ -1,5 +1,5 @@
 /*
- * Copyright 2012-2019 the original author or authors.
+ * Copyright 2012-2021 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -64,6 +64,16 @@ class RestTemplateMetricsConfigurationTests {
 	}
 
 	@Test
+	void restTemplateWithRootUriIsInstrumented() {
+		this.contextRunner.run((context) -> {
+			MeterRegistry registry = context.getBean(MeterRegistry.class);
+			RestTemplateBuilder builder = context.getBean(RestTemplateBuilder.class);
+			builder = builder.rootUri("/root");
+			validateRestTemplate(builder, registry, "/root");
+		});
+	}
+
+	@Test
 	void restTemplateCanBeCustomizedManually() {
 		this.contextRunner.run((context) -> {
 			assertThat(context).hasSingleBean(MetricsRestTemplateCustomizer.class);
@@ -75,22 +85,21 @@ class RestTemplateMetricsConfigurationTests {
 	}
 
 	@Test
-	void afterMaxUrisReachedFurtherUrisAreDenied(CapturedOutput capturedOutput) {
+	void afterMaxUrisReachedFurtherUrisAreDenied(CapturedOutput output) {
 		this.contextRunner.withPropertyValues("management.metrics.web.client.max-uri-tags=2").run((context) -> {
 			MeterRegistry registry = getInitializedMeterRegistry(context);
 			assertThat(registry.get("http.client.requests").meters()).hasSize(2);
-			assertThat(capturedOutput).contains("Reached the maximum number of URI tags for 'http.client.requests'.")
+			assertThat(output).contains("Reached the maximum number of URI tags for 'http.client.requests'.")
 					.contains("Are you using 'uriVariables'?");
 		});
 	}
 
 	@Test
-	void shouldNotDenyNorLogIfMaxUrisIsNotReached(CapturedOutput capturedOutput) {
+	void shouldNotDenyNorLogIfMaxUrisIsNotReached(CapturedOutput output) {
 		this.contextRunner.withPropertyValues("management.metrics.web.client.max-uri-tags=5").run((context) -> {
 			MeterRegistry registry = getInitializedMeterRegistry(context);
 			assertThat(registry.get("http.client.requests").meters()).hasSize(3);
-			assertThat(capturedOutput)
-					.doesNotContain("Reached the maximum number of URI tags for 'http.client.requests'.")
+			assertThat(output).doesNotContain("Reached the maximum number of URI tags for 'http.client.requests'.")
 					.doesNotContain("Are you using 'uriVariables'?");
 		});
 	}
@@ -131,17 +140,22 @@ class RestTemplateMetricsConfigurationTests {
 	}
 
 	private void validateRestTemplate(RestTemplateBuilder builder, MeterRegistry registry) {
-		RestTemplate restTemplate = mockRestTemplate(builder);
+		this.validateRestTemplate(builder, registry, "");
+	}
+
+	private void validateRestTemplate(RestTemplateBuilder builder, MeterRegistry registry, String rootUri) {
+		RestTemplate restTemplate = mockRestTemplate(builder, rootUri);
 		assertThat(registry.find("http.client.requests").meter()).isNull();
 		assertThat(restTemplate.getForEntity("/projects/{project}", Void.class, "spring-boot").getStatusCode())
 				.isEqualTo(HttpStatus.OK);
-		assertThat(registry.get("http.client.requests").tags("uri", "/projects/{project}").meter()).isNotNull();
+		assertThat(registry.get("http.client.requests").tags("uri", rootUri + "/projects/{project}").meter())
+				.isNotNull();
 	}
 
-	private RestTemplate mockRestTemplate(RestTemplateBuilder builder) {
+	private RestTemplate mockRestTemplate(RestTemplateBuilder builder, String rootUri) {
 		RestTemplate restTemplate = builder.build();
 		MockRestServiceServer server = MockRestServiceServer.createServer(restTemplate);
-		server.expect(requestTo("/projects/spring-boot")).andRespond(withStatus(HttpStatus.OK));
+		server.expect(requestTo(rootUri + "/projects/spring-boot")).andRespond(withStatus(HttpStatus.OK));
 		return restTemplate;
 	}
 
